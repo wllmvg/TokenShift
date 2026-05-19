@@ -418,7 +418,7 @@ function Dashboard({ session, profile }) {
   const scheduledDateTime = `${scheduledDate}T${scheduledTime}`;
   const scheduledPreviewStart = new Date(scheduledDateTime);
   const scheduledPreviewEnd = new Date(
-    scheduledPreviewStart.getTime() + 4 * 60 * 60 * 1000
+    scheduledPreviewStart.getTime() + 5 * 60 * 60 * 1000
   );
 
   const isMyActiveUse = activeTurn?.current_user_id === session.user.id;
