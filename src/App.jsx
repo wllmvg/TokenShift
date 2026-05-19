@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
 import "./App.css";
 
@@ -45,6 +45,43 @@ function getReadableTextColor(hexColor) {
   return brightness > 150 ? "#020617" : "#f8fafc";
 }
 
+function formatInputDateTime(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function splitDateTimeLocal(value) {
+  const [date, time] = value.split("T");
+
+  return {
+    date,
+    time,
+  };
+}
+
+function getDefaultReservationDateTime() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() + 30);
+
+  const minutes = date.getMinutes();
+  const roundedMinutes = Math.ceil(minutes / 15) * 15;
+
+  date.setMinutes(roundedMinutes);
+  date.setSeconds(0);
+  date.setMilliseconds(0);
+
+  return formatInputDateTime(date);
+}
+
+function getTodayDateInput() {
+  return formatInputDateTime(new Date()).split("T")[0];
+}
+
 function eventLabel(type) {
   const labels = {
     turn_started: "inició un turno",
@@ -52,9 +89,10 @@ function eventLabel(type) {
     turn_taken: "tomó el turno en curso",
     turn_completed: "finalizó por tiempo cumplido",
     next_reserved: "apartó el siguiente turno",
+    scheduled_reserved: "apartó una fecha y hora específica",
     reservation_claimed: "inició su turno reservado",
     reservation_expired: "perdió su reserva por tiempo vencido",
-    reservation_cancelled: "desapartó el siguiente turno",
+    reservation_cancelled: "desapartó una reserva",
   };
 
   return labels[type] || type;
@@ -360,13 +398,28 @@ function OnboardingScreen({ session, profile, onCompleted }) {
 }
 
 function Dashboard({ session, profile }) {
+  const defaultSchedule = splitDateTimeLocal(getDefaultReservationDateTime());
+
   const [activeTurn, setActiveTurn] = useState(null);
   const [pendingReservation, setPendingReservation] = useState(null);
+  const [upcomingReservations, setUpcomingReservations] = useState([]);
   const [events, setEvents] = useState([]);
   const [timeLeft, setTimeLeft] = useState("00:00:00");
   const [reservationTimer, setReservationTimer] = useState("00:00:00");
+  const [scheduledDate, setScheduledDate] = useState(defaultSchedule.date);
+  const [scheduledTime, setScheduledTime] = useState(defaultSchedule.time);
+  const [shortTurnWarning, setShortTurnWarning] = useState(null);
   const [message, setMessage] = useState("");
   const [loadingAction, setLoadingAction] = useState(false);
+
+  const dateInputRef = useRef(null);
+  const timeInputRef = useRef(null);
+
+  const scheduledDateTime = `${scheduledDate}T${scheduledTime}`;
+  const scheduledPreviewStart = new Date(scheduledDateTime);
+  const scheduledPreviewEnd = new Date(
+    scheduledPreviewStart.getTime() + 4 * 60 * 60 * 1000
+  );
 
   const isMyActiveUse = activeTurn?.current_user_id === session.user.id;
 
@@ -429,17 +482,17 @@ function Dashboard({ session, profile }) {
 
     if (pendingReservation) {
       return {
-        title: "Siguiente turno apartado",
+        title: "Reserva programada",
         description: isMyReservation
           ? "Tienes una reserva pendiente."
-          : "Otra persona apartó el siguiente turno.",
+          : "Otra persona tiene una reserva pendiente.",
         variant: "reserved",
       };
     }
 
     return {
       title: "Claude disponible",
-      description: "Puedes iniciar un nuevo turno de 4 horas.",
+      description: "Puedes iniciar un nuevo turno o apartar una hora específica.",
       variant: "available",
     };
   }, [
@@ -449,6 +502,18 @@ function Dashboard({ session, profile }) {
     pendingReservation,
     isMyReservation,
   ]);
+
+  function openNativePicker(inputRef) {
+    const input = inputRef.current;
+
+    if (!input) return;
+
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+    } else {
+      input.focus();
+    }
+  }
 
   async function loadState() {
     await supabase.rpc("sync_turn_state");
@@ -483,13 +548,14 @@ function Dashboard({ session, profile }) {
       setTimeLeft(activeData ? getCountdownTo(activeData.ends_at) : "00:00:00");
     }
 
-    const { data: reservationData, error: reservationError } = await supabase
+    const { data: reservationsData, error: reservationsError } = await supabase
       .from("turn_reservations")
       .select(
         `
         id,
         user_id,
         available_from,
+        reserved_until,
         expires_at,
         status,
         created_at,
@@ -499,16 +565,19 @@ function Dashboard({ session, profile }) {
       .eq("status", "pending")
       .gt("expires_at", nowIso)
       .order("available_from", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(10);
 
-    if (!reservationError) {
-      setPendingReservation(reservationData || null);
+    if (!reservationsError) {
+      const reservations = reservationsData || [];
+      const firstReservation = reservations[0] || null;
+
+      setUpcomingReservations(reservations);
+      setPendingReservation(firstReservation);
 
       const target =
-        reservationData && isPast(reservationData.available_from)
-          ? reservationData.expires_at
-          : reservationData?.available_from;
+        firstReservation && isPast(firstReservation.available_from)
+          ? firstReservation.expires_at
+          : firstReservation?.available_from;
 
       setReservationTimer(target ? getCountdownTo(target) : "00:00:00");
     }
@@ -609,20 +678,74 @@ function Dashboard({ session, profile }) {
     return () => clearInterval(timer);
   }, [activeTurn, pendingReservation]);
 
-  async function callAction(functionName, successMessage) {
+  function handleActionError(error) {
+    const errorMessage = error?.message || "Ocurrió un error inesperado.";
+
+    if (errorMessage.startsWith("SHORT_TURN:")) {
+      const jsonText = errorMessage.replace("SHORT_TURN:", "");
+
+      try {
+        const parsedWarning = JSON.parse(jsonText);
+        setShortTurnWarning(parsedWarning);
+        setMessage("");
+      } catch {
+        setMessage(errorMessage);
+      }
+
+      return;
+    }
+
+    setMessage(errorMessage);
+  }
+
+  async function callAction(functionName, successMessage, params = undefined) {
     setLoadingAction(true);
     setMessage("");
+    setShortTurnWarning(null);
 
-    const { error } = await supabase.rpc(functionName);
+    const { error } = await supabase.rpc(functionName, params);
 
     if (error) {
-      setMessage(error.message);
+      handleActionError(error);
     } else {
       setMessage(successMessage);
       await loadState();
     }
 
     setLoadingAction(false);
+  }
+
+  async function startTurn(acceptShort = false) {
+    await callAction("start_turn_now", "Turno iniciado correctamente.", {
+      p_accept_short: acceptShort,
+    });
+  }
+
+  async function reserveSpecificDateTime(event) {
+    event.preventDefault();
+
+    if (!scheduledDate || !scheduledTime) {
+      setMessage("Selecciona una fecha y una hora.");
+      return;
+    }
+
+    const selectedDate = new Date(`${scheduledDate}T${scheduledTime}`);
+
+    if (Number.isNaN(selectedDate.getTime())) {
+      setMessage("Selecciona una fecha y hora válida.");
+      return;
+    }
+
+    if (selectedDate.getTime() <= Date.now()) {
+      setMessage("No puedes reservar una fecha u hora que ya pasó.");
+      return;
+    }
+
+    await callAction(
+      "create_scheduled_reservation",
+      "Reserva creada correctamente.",
+      { p_available_from: selectedDate.toISOString() }
+    );
   }
 
   async function logout() {
@@ -636,12 +759,7 @@ function Dashboard({ session, profile }) {
       actions.push(
         <button
           key="start"
-          onClick={() =>
-            callAction(
-              "start_turn_now",
-              "Turno iniciado correctamente. La cuenta regresiva ya empezó."
-            )
-          }
+          onClick={() => startTurn(false)}
           disabled={loadingAction}
         >
           {loadingAction ? "Procesando..." : "Iniciar mi turno"}
@@ -710,12 +828,12 @@ function Dashboard({ session, profile }) {
           onClick={() =>
             callAction(
               "cancel_my_next_turn",
-              "Desapartaste el siguiente turno correctamente."
+              "Desapartaste tu reserva correctamente."
             )
           }
           disabled={loadingAction}
         >
-          {loadingAction ? "Procesando..." : "Desapartar siguiente turno"}
+          {loadingAction ? "Procesando..." : "Desapartar reserva"}
         </button>
       );
     }
@@ -724,19 +842,14 @@ function Dashboard({ session, profile }) {
       actions.push(
         <button
           key="start-reserved"
-          onClick={() =>
-            callAction(
-              "start_turn_now",
-              "Iniciaste tu turno reservado correctamente."
-            )
-          }
+          onClick={() => startTurn(false)}
           disabled={loadingAction || !reservationCanStart}
         >
           {reservationCanStart
             ? loadingAction
               ? "Procesando..."
               : "Iniciar turno reservado"
-            : "Tu turno aún no está disponible"}
+            : "Tu reserva aún no está disponible"}
         </button>
       );
     }
@@ -763,17 +876,15 @@ function Dashboard({ session, profile }) {
   function getActionText() {
     if (!activeTurn && !pendingReservation) {
       return {
-        title: "Puedes iniciar un turno",
-        text: "Al iniciar, se activará una cuenta regresiva de 4 horas para Claude.",
+        title: "Puedes iniciar o reservar",
+        text: "Puedes usar Claude ahora o apartar una fecha y hora específica.",
       };
     }
 
     if (activeTurn && isMyActiveUse) {
       return {
         title: "Estás usando Claude",
-        text: pendingReservation && isMyReservation
-          ? "Tienes el uso actual y también el siguiente turno apartado."
-          : "Puedes liberar el uso, pero el tiempo seguirá corriendo.",
+        text: "Puedes liberar el uso, pero el tiempo seguirá corriendo.",
       };
     }
 
@@ -787,22 +898,22 @@ function Dashboard({ session, profile }) {
     if (activeTurn && canReserveNextTurn) {
       return {
         title: "Puedes apartar el siguiente turno",
-        text: "El siguiente turno iniciará cuando termine el turno actual.",
+        text: "También puedes reservar una fecha y hora específica disponible.",
       };
     }
 
     if (pendingReservation && isMyReservation) {
       return {
-        title: "Tienes el siguiente turno apartado",
+        title: "Tienes una reserva pendiente",
         text: reservationIsAvailable
-          ? "Tu turno ya está disponible. Debes iniciarlo antes de que venza."
-          : "Aún debes esperar a que termine el turno activo.",
+          ? "Tu reserva ya está disponible. Debes iniciarla antes de que venza."
+          : "Tu reserva está programada para una fecha y hora específica.",
       };
     }
 
     return {
       title: "Debes esperar",
-      text: "Claude está ocupado o el siguiente turno ya fue apartado.",
+      text: "Claude está ocupado o hay una reserva pendiente.",
     };
   }
 
@@ -815,7 +926,7 @@ function Dashboard({ session, profile }) {
           <p className="eyebrow">TokenShift</p>
           <h1>Control de turnos</h1>
           <p className="muted">
-            Administra el uso compartido de Claude sin choques entre usuarios.
+            Administra el uso compartido de Claude con turnos, reservas y agenda.
           </p>
         </div>
 
@@ -855,12 +966,12 @@ function Dashboard({ session, profile }) {
         </article>
 
         <article className="overview-card reserved">
-          <span>Siguiente turno</span>
-          <strong>{pendingReservation ? "Apartado" : "Sin reserva"}</strong>
+          <span>Próxima reserva</span>
+          <strong>{pendingReservation ? "Apartada" : "Sin reserva"}</strong>
           <p>
             {pendingReservation
-              ? `Reservado por ${reservedByName}`
-              : "Aún nadie ha apartado el siguiente turno."}
+              ? `Reservada por ${reservedByName}`
+              : "Aún no hay una reserva programada."}
           </p>
         </article>
       </section>
@@ -874,6 +985,37 @@ function Dashboard({ session, profile }) {
           </div>
 
           <div className="primary-action-button">{renderMainActions()}</div>
+
+          {shortTurnWarning && (
+            <div className="short-warning-card">
+              <strong>Tu turno será más corto</strong>
+              <p>
+                Ya existe una reserva de{" "}
+                <b>{shortTurnWarning.reserved_by}</b> para{" "}
+                <b>{formatDateTime(shortTurnWarning.reservation_start)}</b>.
+              </p>
+              <p>
+                Esa reserva fue creada el{" "}
+                <b>{formatDateTime(shortTurnWarning.reserved_at)}</b>. Si
+                continúas, tu turno terminará en{" "}
+                <b>{formatDateTime(shortTurnWarning.short_turn_end)}</b>.
+              </p>
+
+              <div className="warning-actions">
+                <button onClick={() => startTurn(true)} disabled={loadingAction}>
+                  Continuar con turno corto
+                </button>
+
+                <button
+                  className="secondary-button"
+                  onClick={() => setShortTurnWarning(null)}
+                  disabled={loadingAction}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
 
           {message && <p className="message compact-message">{message}</p>}
         </article>
@@ -920,63 +1062,258 @@ function Dashboard({ session, profile }) {
         </article>
 
         <aside className="queue-card">
-          <div className="section-label">Cola de espera</div>
-          <h2>Siguiente turno</h2>
+          <div className="reservation-panel-header">
+            <div>
+              <div className="section-label">Agenda de reservas</div>
+              <h2>Reservar horario</h2>
+              <p>
+                Selecciona cuándo quieres usar Claude. Cada reserva bloquea una
+                franja de 4 horas.
+              </p>
+            </div>
+          </div>
 
-          {pendingReservation ? (
-            <>
-              <div className="queue-user">
+          <form
+            className="schedule-form improved-schedule-form"
+            onSubmit={reserveSpecificDateTime}
+          >
+            <div>
+              <span className="schedule-title">Nuevo horario</span>
+              <p className="schedule-helper">
+                Selecciona el día y la hora de inicio.
+              </p>
+            </div>
+
+            <div className="date-time-picker-grid">
+              <label>
+                Día
                 <div
-                  className="avatar"
-                  style={{
-                    backgroundColor: reservedByColor,
-                    color: getReadableTextColor(reservedByColor),
+                  className="picker-field"
+                  onClick={() => openNativePicker(dateInputRef)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      openNativePicker(dateInputRef);
+                    }
                   }}
                 >
-                  {reservedByName?.charAt(0)}
+                  <input
+                    ref={dateInputRef}
+                    type="date"
+                    min={getTodayDateInput()}
+                    value={scheduledDate}
+                    onChange={(event) => setScheduledDate(event.target.value)}
+                    onClick={() => openNativePicker(dateInputRef)}
+                    onKeyDown={(event) => event.preventDefault()}
+                  />
                 </div>
+              </label>
 
-                <div>
-                  <strong>{reservedByName}</strong>
-                  <span>
-                    {isMyReservation ? "Tu reserva" : "Reserva de otro usuario"}
-                  </span>
+              <label>
+                Hora de inicio
+                <div
+                  className="picker-field"
+                  onClick={() => openNativePicker(timeInputRef)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      openNativePicker(timeInputRef);
+                    }
+                  }}
+                >
+                  <input
+                    ref={timeInputRef}
+                    type="time"
+                    value={scheduledTime}
+                    onChange={(event) => setScheduledTime(event.target.value)}
+                    onClick={() => openNativePicker(timeInputRef)}
+                    onKeyDown={(event) => event.preventDefault()}
+                  />
                 </div>
+              </label>
+            </div>
+
+            <div className="reservation-preview-card">
+              <span>Vista previa</span>
+              <strong>
+                {Number.isNaN(scheduledPreviewStart.getTime())
+                  ? "Selecciona fecha y hora"
+                  : `${formatDateTime(scheduledPreviewStart)} - ${formatDateTime(
+                      scheduledPreviewEnd
+                    )}`}
+              </strong>
+            </div>
+
+            <button disabled={loadingAction}>
+              {loadingAction ? "Procesando..." : "Apartar horario"}
+            </button>
+          </form>
+
+          {pendingReservation ? (
+            <div className="queue-user">
+              <div
+                className="avatar"
+                style={{
+                  backgroundColor: reservedByColor,
+                  color: getReadableTextColor(reservedByColor),
+                }}
+              >
+                {reservedByName?.charAt(0)}
               </div>
 
-              <div className="queue-info">
-                <div>
-                  <span>Disponible desde</span>
-                  <strong>
-                    {formatDateTime(pendingReservation.available_from)}
-                  </strong>
-                </div>
-
-                <div>
-                  <span>Vence</span>
-                  <strong>{formatDateTime(pendingReservation.expires_at)}</strong>
-                </div>
-
-                <div className="reservation-countdown">
-                  <span>
-                    {reservationIsAvailable
-                      ? "Tiempo para iniciar"
-                      : "Falta para iniciar"}
-                  </span>
-                  <strong>{reservationTimer}</strong>
-                </div>
+              <div>
+                <strong>{reservedByName}</strong>
+                <span>
+                  {isMyReservation ? "Tu próxima reserva" : "Próxima reserva"}
+                </span>
               </div>
-            </>
+            </div>
           ) : (
-            <div className="empty-queue">
+            <div className="empty-queue compact-empty">
               <strong>No hay reserva pendiente</strong>
-              <p>
-                Cuando alguien aparte el siguiente turno, aparecerá aquí con su
-                tiempo límite.
-              </p>
+              <p>Puedes apartar una fecha y hora disponible.</p>
+            </div>
+          )}
+
+          {pendingReservation && (
+            <div className="queue-info">
+              <div>
+                <span>Disponible desde</span>
+                <strong>
+                  {formatDateTime(pendingReservation.available_from)}
+                </strong>
+              </div>
+
+              <div>
+                <span>Reservado hasta</span>
+                <strong>
+                  {formatDateTime(pendingReservation.reserved_until)}
+                </strong>
+              </div>
+
+              <div className="reservation-countdown">
+                <span>
+                  {reservationIsAvailable
+                    ? "Tiempo para iniciar"
+                    : "Falta para iniciar"}
+                </span>
+                <strong>{reservationTimer}</strong>
+              </div>
             </div>
           )}
         </aside>
+      </section>
+
+      <section className="agenda-section">
+        <div className="agenda-header">
+          <div>
+            <div className="section-label">Agenda pública</div>
+            <h2>Reservas programadas</h2>
+            <p>
+              Aquí se muestran los próximos horarios apartados. Cada reserva
+              bloquea una franja de 4 horas.
+            </p>
+          </div>
+
+          <div className="agenda-count">
+            <strong>{upcomingReservations.length}</strong>
+            <span>reservas</span>
+          </div>
+        </div>
+
+        {upcomingReservations.length === 0 ? (
+          <div className="agenda-empty-state">
+            <strong>No hay reservas programadas</strong>
+            <p>
+              Cuando alguien aparte un horario específico, aparecerá en esta
+              agenda.
+            </p>
+          </div>
+        ) : (
+          <div className="agenda-list">
+            {upcomingReservations.map((reservation) => {
+              const color =
+                reservation.reserved_user?.profile_color || "#67e8f9";
+              const textColor = getReadableTextColor(color);
+              const mine = reservation.user_id === session.user.id;
+
+              return (
+                <article key={reservation.id} className="agenda-item">
+                  <div className="agenda-date-block">
+                    <span>
+                      {new Date(reservation.available_from).toLocaleDateString(
+                        "es-CO",
+                        {
+                          weekday: "short",
+                        }
+                      )}
+                    </span>
+                    <strong>
+                      {new Date(reservation.available_from).toLocaleDateString(
+                        "es-CO",
+                        {
+                          day: "2-digit",
+                        }
+                      )}
+                    </strong>
+                    <small>
+                      {new Date(reservation.available_from).toLocaleDateString(
+                        "es-CO",
+                        {
+                          month: "short",
+                        }
+                      )}
+                    </small>
+                  </div>
+
+                  <div
+                    className="agenda-user-avatar"
+                    style={{
+                      backgroundColor: color,
+                      color: textColor,
+                    }}
+                  >
+                    {reservation.reserved_user?.display_name?.charAt(0) || "U"}
+                  </div>
+
+                  <div className="agenda-content">
+                    <div className="agenda-content-header">
+                      <strong>
+                        {reservation.reserved_user?.display_name ||
+                          "Usuario sin nombre"}
+                      </strong>
+
+                      {mine && <span className="mine-badge">Tu reserva</span>}
+                    </div>
+
+                    <div className="agenda-time-range">
+                      <span>{formatDateTime(reservation.available_from)}</span>
+                      <span className="agenda-arrow">→</span>
+                      <span>{formatDateTime(reservation.reserved_until)}</span>
+                    </div>
+                  </div>
+
+                  {mine && (
+                    <button
+                      className="danger-button small-button"
+                      onClick={() =>
+                        callAction(
+                          "cancel_my_next_turn",
+                          "Desapartaste tu reserva correctamente."
+                        )
+                      }
+                      disabled={loadingAction}
+                    >
+                      Desapartar
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section className="history-section redesigned-history">

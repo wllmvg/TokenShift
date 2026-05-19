@@ -445,6 +445,12 @@ h2 {
 .queue-card {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.queue-card * {
+  max-width: 100%;
 }
 
 .queue-user {
@@ -499,6 +505,11 @@ h2 {
 .empty-queue strong {
   color: #f8fafc;
   font-size: 1.1rem;
+}
+
+.compact-empty {
+  min-height: auto;
+  margin-top: 16px;
 }
 
 .redesigned-history {
@@ -600,6 +611,314 @@ h2 {
   font-weight: 900;
 }
 
+.reservation-panel-header {
+  margin-bottom: 18px;
+}
+
+.reservation-panel-header h2 {
+  margin: 8px 0 6px;
+  font-size: clamp(1.8rem, 4vw, 2.35rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.reservation-panel-header p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.schedule-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.045);
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.improved-schedule-form {
+  gap: 16px;
+}
+
+.schedule-title {
+  display: block;
+  color: #f8fafc;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.schedule-helper {
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.date-time-picker-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  width: 100%;
+}
+
+.date-time-picker-grid label {
+  min-width: 0;
+  font-size: 0.86rem;
+}
+
+.date-time-picker-grid input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.picker-field {
+  width: 100%;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.picker-field input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.85;
+  filter: invert(1);
+}
+
+.picker-field:focus-within input {
+  border-color: #67e8f9;
+  box-shadow: 0 0 0 4px rgba(103, 232, 249, 0.15);
+}
+
+.reservation-preview-card {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 14px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(103, 232, 249, 0.14), transparent 40%),
+    rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(103, 232, 249, 0.18);
+}
+
+.reservation-preview-card span {
+  display: block;
+  margin-bottom: 6px;
+  color: #67e8f9;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.reservation-preview-card strong {
+  display: block;
+  max-width: 100%;
+  color: #f8fafc;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.short-warning-card {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: #fde68a;
+}
+
+.short-warning-card p {
+  color: #fde68a;
+}
+
+.warning-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.agenda-section {
+  margin-top: 16px;
+  border-radius: 30px;
+  background:
+    linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(8, 47, 73, 0.42)),
+    rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(103, 232, 249, 0.15);
+  padding: 24px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.18);
+}
+
+.agenda-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.agenda-header h2 {
+  margin: 8px 0 6px;
+  font-size: 1.8rem;
+}
+
+.agenda-header p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.5;
+}
+
+.agenda-count {
+  min-width: 96px;
+  padding: 14px;
+  border-radius: 20px;
+  text-align: center;
+  background: rgba(103, 232, 249, 0.1);
+  border: 1px solid rgba(103, 232, 249, 0.18);
+}
+
+.agenda-count strong {
+  display: block;
+  color: #67e8f9;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.agenda-count span {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.agenda-empty-state {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  padding: 24px;
+  text-align: center;
+  border-radius: 24px;
+  border: 1px dashed rgba(103, 232, 249, 0.2);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.agenda-empty-state strong {
+  color: #f8fafc;
+}
+
+.agenda-empty-state p {
+  margin: 6px 0 0;
+  color: #94a3b8;
+}
+
+.agenda-list {
+  display: grid;
+  gap: 12px;
+}
+
+.agenda-item {
+  display: grid;
+  grid-template-columns: 72px 46px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.agenda-date-block {
+  display: grid;
+  place-items: center;
+  min-height: 76px;
+  border-radius: 18px;
+  background: rgba(103, 232, 249, 0.1);
+  border: 1px solid rgba(103, 232, 249, 0.14);
+}
+
+.agenda-date-block span {
+  color: #67e8f9;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.agenda-date-block strong {
+  color: #f8fafc;
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.agenda-date-block small {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.agenda-user-avatar {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  font-weight: 900;
+}
+
+.agenda-content {
+  min-width: 0;
+}
+
+.agenda-content-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.agenda-content-header strong {
+  color: #f8fafc;
+  font-size: 1rem;
+}
+
+.mine-badge {
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #86efac;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.agenda-time-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.agenda-arrow {
+  color: #67e8f9;
+  font-weight: 900;
+}
+
+.small-button {
+  min-height: auto;
+  padding: 9px 12px;
+  font-size: 0.85rem;
+}
+
 @media (max-width: 1060px) {
   .topbar {
     flex-direction: column;
@@ -616,6 +935,33 @@ h2 {
 
   .dashboard-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .agenda-header {
+    flex-direction: column;
+  }
+
+  .agenda-count {
+    width: 100%;
+  }
+
+  .agenda-item {
+    grid-template-columns: 72px 1fr;
+  }
+
+  .agenda-user-avatar {
+    grid-column: 1;
+  }
+
+  .agenda-content {
+    grid-column: 2;
+  }
+
+  .agenda-item .small-button {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 }
 
@@ -639,7 +985,8 @@ h2 {
   .turn-card,
   .queue-card,
   .redesigned-history,
-  .overview-card {
+  .overview-card,
+  .agenda-section {
     border-radius: 24px;
     padding: 20px;
   }
