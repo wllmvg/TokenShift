@@ -98,6 +98,25 @@ function eventLabel(type) {
   return labels[type] || type;
 }
 
+function eventDetail(event) {
+  if (
+    event.event_type === "turn_released" &&
+    event.metadata?.release_usage_percent !== undefined
+  ) {
+    return `Uso reportado de Claude: ${event.metadata.release_usage_percent}%`;
+  }
+
+  if (
+    event.event_type === "turn_taken" &&
+    event.metadata?.previous_release_usage_percent !== undefined &&
+    event.metadata?.previous_release_usage_percent !== null
+  ) {
+    return `Tomó un turno liberado con Claude al ${event.metadata.previous_release_usage_percent}%`;
+  }
+
+  return null;
+}
+
 function useToast() {
   const [toast, setToast] = useState(null);
 
@@ -131,7 +150,7 @@ function Toast({ toast, onClose }) {
     }, toast.duration || 4000);
 
     return () => clearTimeout(timer);
-  }, [toast, onClose]);
+  }, [toast?.id]);
 
   if (!toast) return null;
 
@@ -383,8 +402,6 @@ function OnboardingScreen({ session, profile, onCompleted }) {
     setSaving(false);
   }
 
-
-
   async function logout() {
     await supabase.auth.signOut();
   }
@@ -473,6 +490,9 @@ function Dashboard({ session, profile }) {
   const [scheduledDate, setScheduledDate] = useState(defaultSchedule.date);
   const [scheduledTime, setScheduledTime] = useState(defaultSchedule.time);
   const [shortTurnWarning, setShortTurnWarning] = useState(null);
+  const [highUsageWarning, setHighUsageWarning] = useState(null);
+  const [showReleaseForm, setShowReleaseForm] = useState(false);
+  const [releasePercent, setReleasePercent] = useState(0);
   const [loadingAction, setLoadingAction] = useState(false);
   const { toast, showToast, closeToast } = useToast();
 
@@ -503,7 +523,9 @@ function Dashboard({ session, profile }) {
     !isPast(pendingReservation.expires_at);
 
   const canReserveNextTurn =
-    activeTurn && !pendingReservation && activeTurn.started_by !== session.user.id;
+    activeTurn &&
+    !pendingReservation &&
+    activeTurn.started_by !== session.user.id;
 
   const currentUserName =
     activeTurn?.current_user_profile?.display_name ||
@@ -556,7 +578,8 @@ function Dashboard({ session, profile }) {
 
     return {
       title: "Claude disponible",
-      description: "Puedes iniciar un nuevo turno o apartar una hora específica.",
+      description:
+        "Puedes iniciar un nuevo turno o apartar una hora específica.",
       variant: "available",
     };
   }, [
@@ -595,6 +618,7 @@ function Dashboard({ session, profile }) {
         started_at,
         ends_at,
         released_at,
+        release_usage_percent,
         status,
         started_by_profile:profiles!turns_started_by_fkey(display_name, profile_color),
         current_user_profile:profiles!turns_current_user_id_fkey(display_name, profile_color),
@@ -759,6 +783,20 @@ function Dashboard({ session, profile }) {
       return;
     }
 
+    if (errorMessage.startsWith("HIGH_USAGE_TURN:")) {
+      const jsonText = errorMessage.replace("HIGH_USAGE_TURN:", "");
+
+      try {
+        const parsedWarning = JSON.parse(jsonText);
+        setHighUsageWarning(parsedWarning);
+        closeToast();
+      } catch {
+        showToast("error", "No se pudo completar", errorMessage);
+      }
+
+      return;
+    }
+
     showToast("error", "No se pudo completar", errorMessage);
   }
 
@@ -766,6 +804,7 @@ function Dashboard({ session, profile }) {
     setLoadingAction(true);
     closeToast();
     setShortTurnWarning(null);
+    setHighUsageWarning(null);
 
     const { error } = await supabase.rpc(functionName, params);
 
@@ -789,14 +828,22 @@ function Dashboard({ session, profile }) {
     event.preventDefault();
 
     if (!scheduledDate || !scheduledTime) {
-      showToast("warning", "Datos incompletos", "Selecciona una fecha y una hora.");
+      showToast(
+        "warning",
+        "Datos incompletos",
+        "Selecciona una fecha y una hora."
+      );
       return;
     }
 
     const selectedDate = new Date(`${scheduledDate}T${scheduledTime}`);
 
     if (Number.isNaN(selectedDate.getTime())) {
-      showToast("warning", "Fecha inválida", "Selecciona una fecha y hora válida.");
+      showToast(
+        "warning",
+        "Fecha inválida",
+        "Selecciona una fecha y hora válida."
+      );
       return;
     }
 
@@ -817,11 +864,46 @@ function Dashboard({ session, profile }) {
   }
 
   async function cancelReservation(reservationId) {
+    await callAction("cancel_my_reservation", "Reserva cancelada correctamente.", {
+      p_reservation_id: reservationId,
+    });
+  }
+
+  async function releaseTurnWithUsage(event) {
+    event.preventDefault();
+
+    const parsedPercent = Number(releasePercent);
+
+    if (
+      Number.isNaN(parsedPercent) ||
+      parsedPercent < 0 ||
+      parsedPercent > 100
+    ) {
+      showToast(
+        "warning",
+        "Porcentaje inválido",
+        "Indica un porcentaje entre 0 y 100."
+      );
+      return;
+    }
+
     await callAction(
-      "cancel_my_reservation",
-      "Reserva cancelada correctamente.",
-      { p_reservation_id: reservationId }
+      "release_my_turn",
+      `Liberaste el uso con Claude al ${parsedPercent}%. El contador seguirá corriendo.`,
+      { p_usage_percent: parsedPercent }
     );
+
+    setShowReleaseForm(false);
+  }
+
+  async function takeReleasedTurn(acceptHighUsage = false) {
+    await callAction(
+      "take_current_turn",
+      "Tomaste el turno actual con el tiempo restante.",
+      { p_accept_high_usage: acceptHighUsage }
+    );
+
+    setHighUsageWarning(null);
   }
 
   async function logout() {
@@ -848,15 +930,10 @@ function Dashboard({ session, profile }) {
         <button
           key="release"
           className="secondary-button"
-          onClick={() =>
-            callAction(
-              "release_my_turn",
-              "Liberaste el uso. El contador seguirá corriendo."
-            )
-          }
+          onClick={() => setShowReleaseForm(true)}
           disabled={loadingAction}
         >
-          {loadingAction ? "Procesando..." : "Liberar uso"}
+          Liberar uso
         </button>
       );
     }
@@ -865,12 +942,7 @@ function Dashboard({ session, profile }) {
       actions.push(
         <button
           key="take"
-          onClick={() =>
-            callAction(
-              "take_current_turn",
-              "Tomaste el turno actual con el tiempo restante."
-            )
-          }
+          onClick={() => takeReleasedTurn(false)}
           disabled={loadingAction}
         >
           {loadingAction ? "Procesando..." : "Tomar tiempo restante"}
@@ -955,7 +1027,7 @@ function Dashboard({ session, profile }) {
     if (activeTurn && isMyActiveUse) {
       return {
         title: "Estás usando Claude",
-        text: "Puedes liberar el uso, pero el tiempo seguirá corriendo.",
+        text: "Puedes liberar el uso indicando con qué porcentaje de uso queda Claude.",
       };
     }
 
@@ -1057,6 +1129,55 @@ function Dashboard({ session, profile }) {
 
           <div className="primary-action-button">{renderMainActions()}</div>
 
+          {showReleaseForm && (
+            <form className="release-usage-card" onSubmit={releaseTurnWithUsage}>
+              <div>
+                <strong>¿Con cuánto uso de Claude lo dejas?</strong>
+                <p>
+                  Este porcentaje aparecerá en el historial para que el siguiente
+                  usuario sepa si puede tomar el tiempo restante.
+                </p>
+              </div>
+
+              <label>
+                Porcentaje de uso
+                <div className="usage-input-row">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={releasePercent}
+                    onChange={(event) => setReleasePercent(event.target.value)}
+                  />
+                  <span>%</span>
+                </div>
+              </label>
+
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={releasePercent}
+                onChange={(event) => setReleasePercent(event.target.value)}
+              />
+
+              <div className="release-actions">
+                <button disabled={loadingAction}>
+                  {loadingAction ? "Procesando..." : "Confirmar liberación"}
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setShowReleaseForm(false)}
+                  disabled={loadingAction}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
+
           {shortTurnWarning && (
             <div className="short-warning-card">
               <strong>Tu turno será más corto</strong>
@@ -1083,6 +1204,45 @@ function Dashboard({ session, profile }) {
                   disabled={loadingAction}
                 >
                   Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {highUsageWarning && (
+            <div className="high-usage-warning-card">
+              <strong>Claude está muy consumido</strong>
+
+              <p>
+                {highUsageWarning.released_by || "El usuario anterior"} reportó
+                que Claude quedó al{" "}
+                <b>{highUsageWarning.release_usage_percent}%</b> de uso.
+              </p>
+
+              <p>
+                Es posible que quedes a medias. Lo más recomendable es esperar a
+                que se reinicien los tokens o a que termine el contador actual.
+              </p>
+
+              <p>
+                El turno actual termina en{" "}
+                <b>{formatDateTime(highUsageWarning.ends_at)}</b>.
+              </p>
+
+              <div className="warning-actions">
+                <button
+                  onClick={() => takeReleasedTurn(true)}
+                  disabled={loadingAction}
+                >
+                  Continuar de todas formas
+                </button>
+
+                <button
+                  className="secondary-button"
+                  onClick={() => setHighUsageWarning(null)}
+                  disabled={loadingAction}
+                >
+                  Esperar reinicio
                 </button>
               </div>
             </div>
@@ -1124,8 +1284,12 @@ function Dashboard({ session, profile }) {
 
           {isTurnReleased && (
             <p className="notice">
-              Este turno fue liberado. Al tomarlo, usarás solo el tiempo
-              restante.
+              Este turno fue liberado
+              {activeTurn?.release_usage_percent !== null &&
+              activeTurn?.release_usage_percent !== undefined
+                ? ` con Claude al ${activeTurn.release_usage_percent}% de uso`
+                : ""}
+              . Al tomarlo, usarás solo el tiempo restante.
             </p>
           )}
         </article>
@@ -1396,6 +1560,7 @@ function Dashboard({ session, profile }) {
             {events.map((event) => {
               const userColor = event.user_profile?.profile_color || "#67e8f9";
               const textColor = getReadableTextColor(userColor);
+              const detail = eventDetail(event);
 
               return (
                 <article
@@ -1415,6 +1580,7 @@ function Dashboard({ session, profile }) {
                       {event.user_profile?.display_name || "Usuario sin nombre"}
                     </strong>
                     <p>{eventLabel(event.event_type)}</p>
+                    {detail && <p className="event-detail">{detail}</p>}
                     <small>{formatDateTime(event.created_at)}</small>
                   </div>
                 </article>
