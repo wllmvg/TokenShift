@@ -92,10 +92,72 @@ function eventLabel(type) {
     scheduled_reserved: "apartó una fecha y hora específica",
     reservation_claimed: "inició su turno reservado",
     reservation_expired: "perdió su reserva por tiempo vencido",
-    reservation_cancelled: "desapartó una reserva",
+    reservation_cancelled: "canceló una reserva",
   };
 
   return labels[type] || type;
+}
+
+function useToast() {
+  const [toast, setToast] = useState(null);
+
+  function showToast(type, title, description) {
+    setToast({
+      id: Date.now(),
+      type,
+      title,
+      description,
+      duration: type === "error" ? 5500 : 4000,
+    });
+  }
+
+  function closeToast() {
+    setToast(null);
+  }
+
+  return {
+    toast,
+    showToast,
+    closeToast,
+  };
+}
+
+function Toast({ toast, onClose }) {
+  useEffect(() => {
+    if (!toast) return;
+
+    const timer = setTimeout(() => {
+      onClose();
+    }, toast.duration || 4000);
+
+    return () => clearTimeout(timer);
+  }, [toast, onClose]);
+
+  if (!toast) return null;
+
+  const icons = {
+    success: "✓",
+    error: "!",
+    warning: "!",
+    info: "i",
+  };
+
+  return (
+    <div className="toast-viewport">
+      <div className={`toast-card toast-${toast.type}`}>
+        <div className="toast-icon">{icons[toast.type] || "i"}</div>
+
+        <div className="toast-content">
+          <strong>{toast.title}</strong>
+          {toast.description && <p>{toast.description}</p>}
+        </div>
+
+        <button className="toast-close" onClick={onClose} aria-label="Cerrar">
+          ×
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -173,14 +235,14 @@ function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const { toast, showToast, closeToast } = useToast();
 
   async function handleSubmit(event) {
     event.preventDefault();
 
     setLoading(true);
-    setMessage("");
+    closeToast();
 
     if (mode === "register") {
       const { error } = await supabase.auth.signUp({
@@ -189,9 +251,9 @@ function AuthScreen() {
       });
 
       if (error) {
-        setMessage(error.message);
+        showToast("error", "No se pudo crear la cuenta", error.message);
       } else {
-        setMessage("Cuenta creada. Ahora inicia sesión.");
+        showToast("success", "Cuenta creada", "Ahora inicia sesión.");
         setMode("login");
       }
     } else {
@@ -201,7 +263,7 @@ function AuthScreen() {
       });
 
       if (error) {
-        setMessage(error.message);
+        showToast("error", "No se pudo iniciar sesión", error.message);
       }
     }
 
@@ -250,13 +312,11 @@ function AuthScreen() {
           </button>
         </form>
 
-        {message && <p className="message">{message}</p>}
-
         <button
           className="link-button"
           onClick={() => {
             setMode(mode === "login" ? "register" : "login");
-            setMessage("");
+            closeToast();
           }}
         >
           {mode === "login"
@@ -264,6 +324,8 @@ function AuthScreen() {
             : "Ya tengo cuenta, iniciar sesión"}
         </button>
       </section>
+
+      <Toast toast={toast} onClose={closeToast} />
     </main>
   );
 }
@@ -271,8 +333,8 @@ function AuthScreen() {
 function OnboardingScreen({ session, profile, onCompleted }) {
   const [name, setName] = useState(profile?.display_name || "");
   const [color, setColor] = useState(profile?.profile_color || "#22c55e");
-  const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const { toast, showToast, closeToast } = useToast();
 
   const presetColors = [
     "#22c55e",
@@ -291,17 +353,17 @@ function OnboardingScreen({ session, profile, onCompleted }) {
     const cleanName = name.trim();
 
     if (cleanName.length < 2) {
-      setMessage("Escribe un nombre válido.");
+      showToast("warning", "Nombre inválido", "Escribe un nombre válido.");
       return;
     }
 
     if (!/^#[0-9a-f]{6}$/i.test(color)) {
-      setMessage("Selecciona un color válido.");
+      showToast("warning", "Color inválido", "Selecciona un color válido.");
       return;
     }
 
     setSaving(true);
-    setMessage("");
+    closeToast();
 
     const { error } = await supabase
       .from("profiles")
@@ -313,13 +375,15 @@ function OnboardingScreen({ session, profile, onCompleted }) {
       .eq("id", session.user.id);
 
     if (error) {
-      setMessage(error.message);
+      showToast("error", "No se pudo guardar", error.message);
     } else {
       onCompleted();
     }
 
     setSaving(false);
   }
+
+
 
   async function logout() {
     await supabase.auth.signOut();
@@ -387,12 +451,12 @@ function OnboardingScreen({ session, profile, onCompleted }) {
           </button>
         </form>
 
-        {message && <p className="message">{message}</p>}
-
         <button className="link-button" onClick={logout}>
           Cerrar sesión
         </button>
       </section>
+
+      <Toast toast={toast} onClose={closeToast} />
     </main>
   );
 }
@@ -409,8 +473,8 @@ function Dashboard({ session, profile }) {
   const [scheduledDate, setScheduledDate] = useState(defaultSchedule.date);
   const [scheduledTime, setScheduledTime] = useState(defaultSchedule.time);
   const [shortTurnWarning, setShortTurnWarning] = useState(null);
-  const [message, setMessage] = useState("");
   const [loadingAction, setLoadingAction] = useState(false);
+  const { toast, showToast, closeToast } = useToast();
 
   const dateInputRef = useRef(null);
   const timeInputRef = useRef(null);
@@ -687,20 +751,20 @@ function Dashboard({ session, profile }) {
       try {
         const parsedWarning = JSON.parse(jsonText);
         setShortTurnWarning(parsedWarning);
-        setMessage("");
+        closeToast();
       } catch {
-        setMessage(errorMessage);
+        showToast("error", "No se pudo completar", errorMessage);
       }
 
       return;
     }
 
-    setMessage(errorMessage);
+    showToast("error", "No se pudo completar", errorMessage);
   }
 
   async function callAction(functionName, successMessage, params = undefined) {
     setLoadingAction(true);
-    setMessage("");
+    closeToast();
     setShortTurnWarning(null);
 
     const { error } = await supabase.rpc(functionName, params);
@@ -708,7 +772,7 @@ function Dashboard({ session, profile }) {
     if (error) {
       handleActionError(error);
     } else {
-      setMessage(successMessage);
+      showToast("success", "Acción completada", successMessage);
       await loadState();
     }
 
@@ -725,19 +789,23 @@ function Dashboard({ session, profile }) {
     event.preventDefault();
 
     if (!scheduledDate || !scheduledTime) {
-      setMessage("Selecciona una fecha y una hora.");
+      showToast("warning", "Datos incompletos", "Selecciona una fecha y una hora.");
       return;
     }
 
     const selectedDate = new Date(`${scheduledDate}T${scheduledTime}`);
 
     if (Number.isNaN(selectedDate.getTime())) {
-      setMessage("Selecciona una fecha y hora válida.");
+      showToast("warning", "Fecha inválida", "Selecciona una fecha y hora válida.");
       return;
     }
 
     if (selectedDate.getTime() <= Date.now()) {
-      setMessage("No puedes reservar una fecha u hora que ya pasó.");
+      showToast(
+        "warning",
+        "Horario no disponible",
+        "No puedes reservar una fecha u hora que ya pasó."
+      );
       return;
     }
 
@@ -745,6 +813,14 @@ function Dashboard({ session, profile }) {
       "create_scheduled_reservation",
       "Reserva creada correctamente.",
       { p_available_from: selectedDate.toISOString() }
+    );
+  }
+
+  async function cancelReservation(reservationId) {
+    await callAction(
+      "cancel_my_reservation",
+      "Reserva cancelada correctamente.",
+      { p_reservation_id: reservationId }
     );
   }
 
@@ -825,15 +901,10 @@ function Dashboard({ session, profile }) {
         <button
           key="cancel-reservation"
           className="danger-button"
-          onClick={() =>
-            callAction(
-              "cancel_my_next_turn",
-              "Desapartaste tu reserva correctamente."
-            )
-          }
+          onClick={() => cancelReservation(pendingReservation.id)}
           disabled={loadingAction}
         >
-          {loadingAction ? "Procesando..." : "Desapartar reserva"}
+          {loadingAction ? "Procesando..." : "Cancelar reserva"}
         </button>
       );
     }
@@ -1016,8 +1087,6 @@ function Dashboard({ session, profile }) {
               </div>
             </div>
           )}
-
-          {message && <p className="message compact-message">{message}</p>}
         </article>
 
         <article className="turn-card">
@@ -1068,7 +1137,7 @@ function Dashboard({ session, profile }) {
               <h2>Reservar horario</h2>
               <p>
                 Selecciona cuándo quieres usar Claude. Cada reserva bloquea una
-                franja de 4 horas.
+                franja de 5 horas.
               </p>
             </div>
           </div>
@@ -1213,7 +1282,7 @@ function Dashboard({ session, profile }) {
             <h2>Reservas programadas</h2>
             <p>
               Aquí se muestran los próximos horarios apartados. Cada reserva
-              bloquea una franja de 4 horas.
+              bloquea una franja de 5 horas.
             </p>
           </div>
 
@@ -1298,15 +1367,10 @@ function Dashboard({ session, profile }) {
                   {mine && (
                     <button
                       className="danger-button small-button"
-                      onClick={() =>
-                        callAction(
-                          "cancel_my_next_turn",
-                          "Desapartaste tu reserva correctamente."
-                        )
-                      }
+                      onClick={() => cancelReservation(reservation.id)}
                       disabled={loadingAction}
                     >
-                      Desapartar
+                      Cancelar
                     </button>
                   )}
                 </article>
@@ -1359,6 +1423,8 @@ function Dashboard({ session, profile }) {
           </div>
         )}
       </section>
+
+      <Toast toast={toast} onClose={closeToast} />
     </main>
   );
 }
